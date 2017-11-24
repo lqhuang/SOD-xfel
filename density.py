@@ -67,8 +67,6 @@ def real_to_fspace(M, axes=None, threads=None):
                                                      axes=axes),
                                          axes=axes),
                          dtype=complex_t)
-        ret = np.require(np.fft.fftshift(fftmod.fftn(np.fft.fftshift(M))),
-                         dtype=complex_t)
     # nrm is the scaling factor needed to make an unnormalized FFT a
     # unitary transform
     if axes is None:
