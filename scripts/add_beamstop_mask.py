@@ -4,13 +4,7 @@ from __future__ import print_function, division
 import os
 import sys
 sys.path.append(os.path.dirname(sys.path[0]))
-try:
-    import cPickle as pickle  # python 2
-except ImportError:
-    import pickle  # python 3
-import socket
 import argparse
-from random import randint
 
 from matplotlib import pyplot as plt
 from numpy import unravel_index, log, maximum
