@@ -11,6 +11,14 @@ from matplotlib import gridspec
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 import numpy as np
 from scipy.stats import entropy
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+try:
+    from psutil import cpu_count
+    NUM_CORES = cpu_count(logical=False)
+except ImportError:
+    from multiprocessing import cpu_count
+    NUM_CORES = cpu_count()
+
 
 from cryoio import mrc
 from cryoio import ctf
@@ -180,7 +188,7 @@ def kernel_test(data_dir, model_file, use_angular_correlation=False):
             try:
                 line = par.readline().split()
                 euler_angles.append([float(line[1]), float(line[2]), float(line[3])])
-            except:
+            except Exception:
                 break
     euler_angles = np.asarray(euler_angles)
 
@@ -239,8 +247,12 @@ def kernel_test(data_dir, model_file, use_angular_correlation=False):
 class SimpleKernel():
     def __init__(self, cryodata, use_angular_correlation=False):
         self.cryodata = cryodata
-        self.N = self.cryodata.get_num_pixels()
-        self.psize = self.cryodata.get_pixel_size()
+        try:
+            self.N = self.cryodata.get_num_pixels()
+            self.psize = self.cryodata.get_pixel_size()
+        except AttributeError:
+            self.N = self.cryodata.imgstack.get_num_pixels()
+            self.psize = self.cryodata.imgstack.get_pixel_size()
 
         symmetry = self.cryodata.dataset_params.get('symmetry', None)
         self.is_sym = get_symmetryop(symmetry)
@@ -249,12 +261,16 @@ class SimpleKernel():
 
         self.use_cached_slicing = True
         self.use_angular_correlation = use_angular_correlation
+        self.ac_slices = None
 
         self.G_datatype = np.float32
 
-        self.cached_workspace = dict()
+        self.executor = ThreadPoolExecutor(max_workers=NUM_CORES)
 
-    def get_angular_correlation(self, slices_sampled, rotd_sampled, rotc_sampled, envelope, log_W_I):
+        self.cached_workspace = dict()
+        self.cached_cphi = dict()
+
+    def get_angular_correlation(self, slices_sampled, rotd_sampled, rotc_sampled, envelope, log_W_I, return_ac_data=False):
         N_R, N_T = slices_sampled.shape
         assert rotd_sampled[0].shape == rotc_sampled[0].shape
         assert rotd_sampled[0].shape[0] == N_T
@@ -266,18 +282,41 @@ class SimpleKernel():
                              * slices_sampled
         else:
             slices_sampled = np.tile(rotc_sampled[max_W_I], (N_R, 1)) * slices_sampled
+
         
-        ac_slices = correlation.calc_angular_correlation(np.abs(slices_sampled), self.N, self.rad, self.psize)
-        ac_data = correlation.calc_angular_correlation(np.abs(rotd_sampled[max_W_I]), self.N, self.rad, self.psize)
+
+        if self.ac_slices is not None:
+            ac_slices = self.ac_slices
+        else:
+        #     slices_sampled_full = projector.trunc_to_full(slices_sampled, self.N, self.rad, self.beamstop_rad)
+        #     ac_slices = correlation.get_corr_imgs(slices_sampled_full, self.rad, self.beamstop_rad)
+              ac_slices = correlation.calc_angular_correlation(slices_sampled, self.N, self.rad, self.beamstop_rad, self.psize, clip=False)
+        #     self.ac_slices = ac_slices
+        
+        
+        # rotd_sampled_full = sincint.gentrunctofull(self.N, self.rad, self.beamstop_rad).dot(rotd_sampled[max_W_I]).reshape(self.N, self.N)
+        # ac_data = correlation.get_corr_img(rotd_sampled_full, self.rad, self.beamstop_rad)
+        ac_data = correlation.calc_angular_correlation(rotd_sampled[max_W_I], self.N, self.rad, self.beamstop_rad, self.psize, clip=False)
+        
+        # plt.imshow(rotd_sampled_full)
+        # plt.show()
+
+        # plt.imshow(ac_data.reshape(-1, 360))
+        # plt.show()
 
         # check zeros
-        ac_slices[ac_slices == 0.0] + 1e-16
         # calculating K-L divergence
-        ac_e_R = entropy(np.tile(ac_data, (N_R, 1)).T, ac_slices.T)  # qk is used to approximate pk, qk
-        ac_indices = ac_e_R.argsort()
-        cutoff = 7
-
-        return ac_indices[0:cutoff]
+        # ac_slices[ac_slices == 0.0] + 1e-8
+        # ac_e_R = entropy(np.tile(ac_data, (N_R, 1)).T, ac_slices.T)  # qk is used to approximate pk, qk
+        tiled_ac_data = np.tile(ac_data, (N_R, 1))
+        ac_e_R = ( (tiled_ac_data - ac_slices) ** 2 / tiled_ac_data ).sum(axis=1)
+        # ac_indices = ac_e_R.argsort()
+        # cutoff = 7
+        # return ac_indices[0:cutoff]
+        if not return_ac_data:
+            return ac_e_R
+        elif return_ac_data:
+            return ac_e_R, ac_slices, ac_data
 
     def set_data(self, model, cparams):
 
@@ -291,9 +330,11 @@ class SimpleKernel():
         cparams['iteration'] = 0
         max_freq = cparams['max_frequency']
         rad_cutoff = cparams.get('rad_cutoff', 1.0)
-        rad = min(rad_cutoff, max_freq * 2.0 * self.psize)
+        fake_oversampling_factor = 1.0
+        rad = min(rad_cutoff, max_freq * fake_oversampling_factor * self.psize)
+        self.beamstop_rad = cparams.get('beamstop_freq', 0.05) * fake_oversampling_factor * self.psize
 
-        self.xy, self.trunc_xy, self.truncmask = geometry.gencoords(self.N, 2, rad, True)
+        self.xy, self.trunc_xy, self.truncmask = geometry.gencoords_centermask(self.N, 2, rad, self.beamstop_rad, True)
         self.trunc_freq = np.require(self.trunc_xy / (self.N * self.psize), dtype=np.float32) 
         self.N_T = self.trunc_xy.shape[0]
 
@@ -304,7 +345,7 @@ class SimpleKernel():
         else:
             self.envelope = np.ones(self.N_T, dtype=np.float32)
         
-        print("Iteration {0}: freq = {3}, rad = {1:.4f}, N_T = {2}".format(cparams['iteration'], rad, self.N_T, max_freq))
+        # print("Iteration {0}: freq = {3}, rad = {1:.4f}, beamstop_rad={4:.4f}, N_T = {2}".format(cparams['iteration'], rad, self.N_T, max_freq, self.beamstop_rad))
         self.set_quad(rad)
 
         # Setup inlier model
@@ -314,7 +355,7 @@ class SimpleKernel():
         # self.inlier_const = (self.N_T/2.0)*np.log(2.0*np.pi*self.inlier_sigma2)
 
         # # Compute the likelihood for the image content outside of rad
-        # _,_,fspace_truncmask = gencoords(self.fspace_stack.get_num_pixels(), 2, rad*self.fspace_stack.get_num_pixels()/self.N, True)
+        # _,_,fspace_truncmask = gencoords_centermask(self.fspace_stack.get_num_pixels(), 2, rad*self.fspace_stack.get_num_pixels()/self.N, True)
         # self.imgpower = np.empty((self.minibatch['N_M'],),dtype=density.real_t)
         # self.imgpower_trunc = np.empty((self.minibatch['N_M'],),dtype=density.real_t)
         # for idx,Idx in enumerate(self.minibatch['img_idxs']):
@@ -334,34 +375,37 @@ class SimpleKernel():
             tic = time.time()
             # set slicing interpolation parameters
             self.slice_params = {'quad_type': 'sk97'}
-            self.slice_interp = {'N': self.N, 'kern': 'lanczos', 'kernsize': 6, 'rad': rad, 'zeropad': 0, 'dopremult': True, }# 'onlyRs': True}
+            self.slice_interp = {'N': self.N, 'kern': 'lanczos', 'kernsize': 6, 'rad': rad, 'zeropad': 0, 'dopremult': True} #, 'onlyRs': True}
             # set slicing quadrature
             usFactor_R = 1.0
             quad_R = quadrature.quad_schemes[('dir', self.slice_params['quad_type'])]
-            degree_R, resolution_R = quad_R.compute_degree(self.N, rad, usFactor_R)
+            const_rad = 0.6
+            degree_R, resolution_R = quad_R.compute_degree(self.N, const_rad, usFactor_R)
+            # print(np.rad2deg(resolution_R))
             slice_quad = {}
             slice_quad['resolution'] = max(0.5*quadrature.compute_max_angle(self.N, rad), resolution_R)
+            # slice_quad['resolution'] = np.rad2deg(resolution_R)
             slice_quad['dir'], slice_quad['W'] = quad_R.get_quad_points(degree_R, self.is_sym)
             self.slice_quad = slice_quad
             self.quad_domain_R = quadrature.FixedSphereDomain(slice_quad['dir'], slice_quad['resolution'], sym=self.is_sym)
             # generate slicing operators (points on sphere)
             self.slice_ops = self.quad_domain_R.compute_operator(self.slice_interp)
             self.N_R = len(self.quad_domain_R)
-            print("  Slice Ops: %d, resolution: %.2f degree, generated in: %.4f seconds" \
-                % (self.N_R, np.rad2deg(self.quad_domain_R.resolution), time.time()-tic))
+            # print("  Slice Ops: %d, resolution: %.2f degree, generated in: %.4f seconds" \
+            #     % (self.N_R, np.rad2deg(self.quad_domain_R.resolution), time.time()-tic))
 
             tic = time.time()
             # set inplane interpolation parameters
-            self.inplane_interp = {'N': self.N, 'kern': 'lanczos', 'kernsize': 6, 'rad': rad, 'zeropad': 0, 'dopremult': True, }# 'onlyRs': True}
+            self.inplane_interp = {'N': self.N, 'kern': 'lanczos', 'kernsize': 6, 'rad': rad, 'zeropad': 0, 'dopremult': True} #, 'onlyRs': True}
             # set inplane quadrature
             usFactor_I = 1.0
-            maxAngle = quadrature.compute_max_angle(self.N, rad, usFactor_I)
+            maxAngle = quadrature.compute_max_angle(self.N, const_rad, usFactor_I)
             degree_I = np.uint32(np.ceil(2.0 * np.pi / maxAngle))
             resolution_I = max(0.5*quadrature.compute_max_angle(self.N, rad), 2.0*np.pi / degree_I)
             inplane_quad = {}
             inplane_quad['resolution'] = resolution_I
             inplane_quad['thetas'] = np.linspace(0, 2.0*np.pi, degree_I, endpoint=False)
-            inplane_quad['thetas'] += inplane_quad['thetas'][1]/2.0
+            # inplane_quad['thetas'] += inplane_quad['thetas'][1]/2.0
             inplane_quad['W'] = np.require((2.0*np.pi/float(degree_I))*np.ones((degree_I,)), dtype=np.float32)
             self.inplane_quad = inplane_quad
             self.quad_domain_I = quadrature.FixedCircleDomain(inplane_quad['thetas'],
@@ -369,8 +413,8 @@ class SimpleKernel():
             # generate inplane operators
             self.inplane_ops = self.quad_domain_I.compute_operator(self.inplane_interp)
             self.N_I = len(self.quad_domain_I)
-            print("  Inplane Ops: %d, resolution: %.2f degree, generated in: %.4f seconds." \
-                % (self.N_I, np.rad2deg(self.quad_domain_I.resolution), time.time()-tic))
+            # print("  Inplane Ops: %d, resolution: %.2f degree, generated in: %.4f seconds." \
+            #     % (self.N_I, np.rad2deg(self.quad_domain_I.resolution), time.time()-tic))
 
             transform_change = self.cryodata.interp_params['kern'] != self.inplane_interp['kern'] or \
                             self.cryodata.interp_params['kernsize'] != self.inplane_interp['kernsize'] or \
@@ -392,7 +436,7 @@ class SimpleKernel():
             cCTF = self.cryodata.get_ctf(idx)
             rotc_sampled = cCTF.compute(self.trunc_freq, self.quad_domain_I.theta).T
         else:
-            rotc_sampled = np.ones_like(rotd_sampled, dtype=density.real_t)
+            rotc_sampled = np.ones((self.N_I, self.N_T), dtype=density.real_t)
 
         # compute operators and slices
         # slicing samples
@@ -406,10 +450,18 @@ class SimpleKernel():
             slices_sampled = self.slices_sampled
         else:
             fM = self.model
-            slices_sampled = cryoem.getslices_interp(fM, self.slice_ops, self.rad).reshape((N_R, N_T))
+            slices_sampled = cryoem.getslices_interp(fM, self.slice_ops, self.rad, self.beamstop_rad).reshape((N_R, N_T))
             slices_sampled *= np.tile(rotc_sampled[0], (N_R, 1))
             # slices_sampled += 1.0
             self.slices_sampled = slices_sampled
+            # print("pre-compute slices_sampled")
+
+        if self.use_angular_correlation:
+            if self.use_cached_slicing and self.ac_slices is None:
+                # slices_sampled_full = projector.trunc_to_full(self.slices_sampled, self.N, self.rad, self.beamstop_rad)
+                # self.ac_slices = correlation.get_corr_imgs(slices_sampled_full, self.rad, self.beamstop_rad)
+                self.ac_slices = correlation.calc_angular_correlation(slices_sampled, self.N, self.rad, self.beamstop_rad, self.psize, clip=False)
+                # print("pre-compute angular correlation slices.")
 
         # inplane samples
         W_I = self.inplane_quad['W']
@@ -417,17 +469,17 @@ class SimpleKernel():
         sampleinfo_I = None  # N_I_sampled, samples_I, sampleweights_I
         # self.inplane_ops = self.quad_domain_I.compute_operator(self.interp_params_I, self.samples_I)
         curr_fft_image = self.cryodata.get_image(idx)
-        print('(min, max) intensity for fft proj: ({}, {})'.format(curr_fft_image.min(), curr_fft_image.max()))
-        rotd_sampled = cryoem.getslices_interp(curr_fft_image, self.inplane_ops, self.rad).reshape((N_I, N_T))
+        # print('(min, max) intensity for fft proj: ({}, {})'.format(curr_fft_image.min(), curr_fft_image.max()))
+        rotd_sampled = cryoem.getslices_interp(curr_fft_image, self.inplane_ops, self.rad, self.beamstop_rad).reshape((N_I, N_T))
         rotd_sampled *= rotc_sampled
 
         # rotd_sampled += 1.0
 
-        print('total photons of slices_sampled: {}'.format(slices_sampled.sum(axis=1)))
-        print('total photons of rotd_sampled: {}'.format(rotd_sampled.sum(axis=1)))
+        # print('total photons of slices_sampled: {}'.format(slices_sampled.sum(axis=1)))
+        # print('total photons of rotd_sampled: {}'.format(rotd_sampled.sum(axis=1)))
 
-        np.maximum(slices_sampled, 1e-4, out=slices_sampled)
-        np.maximum(rotd_sampled, 1e-4, out=rotd_sampled)
+        np.maximum(slices_sampled, 1e-6, out=slices_sampled)
+        np.maximum(rotd_sampled, 1e-6, out=rotd_sampled)
         # np.maximum(slices_sampled, 1.0, out=slices_sampled)
         # np.maximum(rotd_sampled, 1.0, out=rotd_sampled)
 
@@ -439,6 +491,7 @@ class SimpleKernel():
         g_size = (self.N_R, self.N_T)
         g = np.zeros(g_size, dtype=self.G_datatype)
         workspace = None
+        cphi = dict()
         sigma2 = self.inlier_sigma2_trunc 
 
         slice_ops, envelope, \
@@ -446,35 +499,60 @@ class SimpleKernel():
         W_I_sampled, sampleinfo_I, rotd_sampled, rotc_sampled = \
             self.prep_operators(idx)
 
-        TtoF = sincint.gentrunctofull(N=self.N, rad=self.rad)
-        slicing = TtoF.dot(slices_sampled[11]).reshape(self.N, self.N)
-        rotd = TtoF.dot(rotd_sampled[0]).reshape(self.N, self.N)
-        fig, ax = plt.subplots(ncols=2)
-        im_slicing = ax[0].imshow(slicing)
-        fig.colorbar(im_slicing, ax=ax[0])
-        im_rotd = ax[1].imshow(rotd)
-        fig.colorbar(im_rotd, ax=ax[1])
-        # plt.show()
-
-        print('(min, max) intensity for slices_sampled: ({}, {})'.format(slices_sampled.min(), slices_sampled.max()))
-        print('(min, max) intensity for rotd_sampled: ({}, {})'.format(rotd_sampled.min(), rotd_sampled.max()))
+        # print('(min, max) intensity for slices_sampled: ({}, {})'.format(slices_sampled.min(), slices_sampled.max()))
+        # print('(min, max) intensity for rotd_sampled: ({}, {})'.format(rotd_sampled.min(), rotd_sampled.max()))
         if self.use_angular_correlation:
-            # print('max intensity for ac_slices_sampled:', ac_slices_sampled.max())
-            # print('max intensity for ac_data_sampled:', ac_data_sampled.max())
-            ac_indices = self.get_angular_correlation(
+            ac_e_R = self.get_angular_correlation(
                 slices_sampled, rotd_sampled, rotc_sampled, envelope, W_I_sampled)
+            # ac_e_R, ac_slices, ac_data = self.get_angular_correlation(
+            #     slices_sampled, rotd_sampled, rotc_sampled, envelope, W_I_sampled,
+            #     return_ac_data=True)
+            # print('max intensity for ac_slices:', ac_slices.max())
+            # print('max intensity for ac_data:', ac_data.max())
+            # print('ratio for ac_slices:', (ac_slices > 1).sum() / ac_slices.size )
+            # print('ratio for ac_data:', (ac_data > 1).sum() / ac_data.size )
+            # plt.hist(ac_data)
+            # plt.show()
+
+        # TtoF = sincint.gentrunctofull(N=self.N, rad=self.rad, beamstop_rad=self.beamstop_rad)
+        # if self.use_angular_correlation:
+        #     # print("...............")
+        #     slicing = TtoF.dot(ac_slices[11]).reshape(self.N, self.N)
+        #     rotd = TtoF.dot(ac_data).reshape(self.N, self.N)
+        # else:
+        #     slicing = TtoF.dot(slices_sampled[11]).reshape(self.N, self.N)
+        #     rotd = TtoF.dot(rotd_sampled[0]).reshape(self.N, self.N)
+        # fig, ax = plt.subplots(ncols=2)
+        # im_slicing = ax[0].imshow(slicing)
+        # fig.colorbar(im_slicing, ax=ax[0])
+        # im_rotd = ax[1].imshow(rotd)
+        # fig.colorbar(im_rotd, ax=ax[1])
+        # plt.show()
 
         log_W_I = np.log(W_I_sampled)
         log_W_R = np.log(W_R_sampled)
 
         if self.use_angular_correlation:
-            like, (cphi_I, cphi_R), csigma2_est, ccorrelation, cpower, workspace = \
-                py_objective_kernels.doimage_ACRI(slices_sampled, envelope, \
-                    rotc_sampled, rotd_sampled, \
-                    # ac_slices_sampled, ac_data_sampled, \
-                    ac_indices,
-                    log_W_I, log_W_R, \
-                    sigma2, g, workspace)
+            # like, (cphi_I, cphi_R), csigma2_est, ccorrelation, cpower, workspace = \
+            #     py_objective_kernels.doimage_ACRI(slices_sampled, envelope, \
+            #         rotc_sampled, rotd_sampled, \
+            #         # ac_slices_sampled, ac_data_sampled, \
+            #         ac_indices,
+            #         log_W_I, log_W_R, \
+            #         sigma2, g, workspace)
+            workspace = dict()
+            cphi_R = -ac_e_R
+            # print(ac_e_R)
+            max_R = np.argmin(-ac_e_R)
+            cphi_I = np.zeros(self.N_I)
+            cproj = slices_sampled[max_R]
+            cprojs = rotc_sampled * np.tile(cproj, (self.N_I, 1)) + 1.0 - rotc_sampled
+            cim = rotc_sampled * rotd_sampled + 1.0 - rotc_sampled
+            # compute the log likelihood
+            sigma2_I = rotc_sampled * (cim * np.log(cprojs) - cprojs) # + my_gammaln(cim)
+            tmp = sigma2_I
+            cphi_I = 1.0 * tmp.sum(axis=1) + log_W_I
+            like = 0.0
         else:
             like, (cphi_I, cphi_R), csigma2_est, ccorrelation, cpower, workspace = \
                 objective_kernels.doimage_RI(slices_sampled, envelope, \
@@ -482,10 +560,12 @@ class SimpleKernel():
                     log_W_I, log_W_R, \
                     sigma2, g, workspace)
 
-        print("Like", like)
+        # print("Like", like)
         workspace['like'] = like
         workspace['cphi_I'] = cphi_I
         workspace['cphi_R'] = cphi_R
+        cphi['cphi_I'] = cphi_I
+        cphi['cphi_R'] = cphi_R
         
         g = np.zeros(g_size, dtype=self.G_datatype)
 
@@ -499,8 +579,18 @@ class SimpleKernel():
         # workspace['full_like_cphi_I'] = cphi_I
         # workspace['full_like_cphi_R'] = cphi_R
 
-        self.cached_workspace[idx] = workspace
-        return workspace
+        # self.cached_workspace[idx] = workspace
+        self.cached_cphi[idx] = cphi
+        return cphi
+
+    def concurrent_worker(self, idxs_list):
+        idxs_list = list(idxs_list)
+        assert len(idxs_list) > 2
+        first = self.worker(idxs_list[0])
+        self.cached_cphi[0] = first
+        res_list = self.executor.map(self.worker, idxs_list[1:])
+        for idx, cphi in zip(idxs_list[1:], res_list):
+            self.cached_cphi[idx] = cphi
 
     def plot_quadrature(self):
         import healpy as hp
@@ -553,7 +643,7 @@ class SimpleKernel():
         sorted_indices_R = (-phi_R).argsort()
         sorted_indices_I = (-phi_I).argsort()
 
-        cutoff_idx_R = 7
+        cutoff_idx_R = 10
         cutoff_idx_I = 1
         # cutoff_idx_R = np.diff((-phi_R)[sorted_indices_R]).argmax() + 1
         # cutoff_idx_I = np.diff((-phi_I)[sorted_indices_I]).argmax() + 1
@@ -572,6 +662,8 @@ class SimpleKernel():
         plotwinkeltriple(quad_domain_R.dirs, -phi_R, spot=spot, others=potential_R,
                          vmin=-phi_R.max(), vmax=-phi_R.min(), lognorm=lognorm, axes=ax_slicing)
         ax_slicing.set_title('slicing distribution for likelihood')
+        ax_slicing.set_xlabel('rotation (rad)')
+        ax_slicing.set_ylabel('tilt (rad)')
 
         ax_inplane = fig.add_subplot(gs[-1], projection='polar')
         ax_inplane.plot(quad_domain_I.theta, -phi_I)
@@ -609,7 +701,7 @@ def likelihood_estimate(model, refined_model, use_angular_correlation=False, add
             try:
                 line = par.readline().split()
                 euler_angles.append([float(line[1]), float(line[2]), float(line[3])])
-            except:
+            except Exception:
                 break
     euler_angles = np.asarray(euler_angles)
 
@@ -637,6 +729,8 @@ def likelihood_estimate(model, refined_model, use_angular_correlation=False, add
         print("idx: {}, time per worker: {}".format(i, time.time()-tic))
         sk.plot_distribution(workspace, sk.quad_domain_R, sk.quad_domain_I,
                              correct_ea=cryodata.euler_angles[i], lognorm=False)
+
+    
 
         # workspace['cphi_R'] = workspace['full_like_cphi_R']
         # workspace['cphi_I'] = workspace['full_like_cphi_I']

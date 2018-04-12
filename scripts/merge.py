@@ -39,7 +39,7 @@ with open(os.path.join(data_dir, 'ctf_gt.par')) as par:
         try:
             line = par.readline().split()
             euler_angles.append([float(line[1]), float(line[2]), float(line[3])])
-        except:
+        except Exception:
             break
 euler_angles = np.deg2rad(np.asarray(euler_angles))
 imgdata = mrc.readMRC(img_file)

@@ -16,7 +16,7 @@ from matplotlib import pyplot as plt
 from cryoio.imagestack import MRCImageStack, FourierStack
 from cryoio.ctfstack import CTFStack
 from cryoio.dataset import CryoDataset
-from cryoio import ctf
+from cryoio import ctf, mrc
 import cryoops
 import cryoem
 import density
@@ -28,88 +28,120 @@ import pyximport; pyximport.install(
     build_dir=cython_build_dirs, setup_args={"include_dirs": np.get_include()}, reload_support=True)
 import sincint
 
-from noise_test import plot_noise_histogram, plot_stack_noise
+from test.noise_test import plot_noise_histogram, plot_stack_noise
 
 
 class SimpleDataset():
     def __init__(self, model, dataset_params, ctf_params,
                  interp_params={'kern': 'lanczos', 'kernsize': 4.0, 'zeropad': 0, 'dopremult': True},
                  load_cache=True):
-        assert isinstance(model, np.ndarray), "Unexpected data type for input model"
 
         self.dataset_params = dataset_params
-        self.num_pixels = model.shape[0]
-        N = self.num_pixels
-        self.num_images = dataset_params['num_images']
-        assert self.num_images > 1, "it's better to make num_images larger than 1."
-        self.pixel_size = float(dataset_params['pixel_size'])
-        euler_angles = dataset_params['euler_angles']
-        self.is_sym = get_symmetryop(dataset_params.get('symmetry', None))
 
-        if euler_angles is None and self.is_sym is None:
-            pt = np.random.randn(self.num_images, 3)
-            pt /= np.linalg.norm(pt, axis=1, keepdims=True)
-            euler_angles = geometry.genEA(pt)
-            euler_angles[:, 2] = 2 * np.pi * np.random.rand(self.num_images)
-        elif euler_angles is None and self.is_sym is not None:
-            euler_angles = np.zeros((self.num_images, 3))
-            for i, ea in enumerate(euler_angles):
-                while True:
-                    pt = np.random.randn(3)
-                    pt /= np.linalg.norm(pt)
-                    if self.is_sym.in_asymunit(pt.reshape(-1, 3)):
-                        break
-                ea[0:2] = geometry.genEA(pt)[0][0:2]
-                ea[2] = 2 * np.pi * np.random.rand()
-        self.euler_angles = euler_angles.reshape((-1, 3))
+        if model is not None:
+            # assert False
+            assert isinstance(model, np.ndarray), "Unexpected data type for input model"
 
-        if ctf_params is not None:
-            self.use_ctf = True
-            ctf_map = ctf.compute_full_ctf(None, N, ctf_params['psize'],
-                ctf_params['akv'], ctf_params['cs'], ctf_params['wgh'],
-                ctf_params['df1'], ctf_params['df2'], ctf_params['angast'],
-                ctf_params['dscale'], ctf_params.get('bfactor', 500))
-            self.ctf_params = copy(ctf_params)
-            if 'bfactor' in self.ctf_params.keys():
-                self.ctf_params.pop('bfactor')
+            self.num_pixels = model.shape[0]
+            N = self.num_pixels
+            self.num_images = dataset_params['num_images']
+            assert self.num_images > 1, "it's better to make num_images larger than 1."
+            self.pixel_size = float(dataset_params['pixel_size'])
+            euler_angles = dataset_params['euler_angles']
+            self.is_sym = get_symmetryop(dataset_params.get('symmetry', None))
+
+            if euler_angles is None and self.is_sym is None:
+                pt = np.random.randn(self.num_images, 3)
+                pt /= np.linalg.norm(pt, axis=1, keepdims=True)
+                euler_angles = geometry.genEA(pt)
+                euler_angles[:, 2] = 2 * np.pi * np.random.rand(self.num_images)
+            elif euler_angles is None and self.is_sym is not None:
+                euler_angles = np.zeros((self.num_images, 3))
+                for i, ea in enumerate(euler_angles):
+                    while True:
+                        pt = np.random.randn(3)
+                        pt /= np.linalg.norm(pt)
+                        if self.is_sym.in_asymunit(pt.reshape(-1, 3)):
+                            break
+                    ea[0:2] = geometry.genEA(pt)[0][0:2]
+                    ea[2] = 2 * np.pi * np.random.rand()
+            self.euler_angles = euler_angles.reshape((-1, 3))
+
+            if ctf_params is not None:
+                self.use_ctf = True
+                ctf_map = ctf.compute_full_ctf(None, N, ctf_params['psize'],
+                    ctf_params['akv'], ctf_params['cs'], ctf_params['wgh'],
+                    ctf_params['df1'], ctf_params['df2'], ctf_params['angast'],
+                    ctf_params['dscale'], ctf_params.get('bfactor', 500))
+                self.ctf_params = copy(ctf_params)
+                if 'bfactor' in self.ctf_params.keys():
+                    self.ctf_params.pop('bfactor')
+            else:
+                self.use_ctf = False
+                ctf_map = np.ones((N**2,), dtype=density.real_t)
+
+            kernel = 'lanczos'
+            ksize = 6
+            rad = 0.95
+            # premult = cryoops.compute_premultiplier(N, kernel, ksize)
+            TtoF = sincint.gentrunctofull(N=N, rad=rad)
+            base_coords = geometry.gencoords(N, 2, rad)
+            # premulter =   premult.reshape((1, 1, -1)) \
+            #             * premult.reshape((1, -1, 1)) \
+            #             * premult.reshape((-1, 1, 1))
+            # fM = density.real_to_fspace(premulter * model)
+            fM = model
+
+            # if load_cache:
+            #     try:
+            print("Generating Dataset ... :")
+            tic = time.time()
+            imgdata = np.empty((self.num_images, N, N), dtype=density.real_t)
+            for i, ea in zip(range(self.num_images), self.euler_angles):
+                R = geometry.rotmat3D_EA(*ea)[:, 0:2]
+                slop = cryoops.compute_projection_matrix(
+                    [R], N, kernel, ksize, rad, 'rots')
+                # D = slop.dot(fM.reshape((-1,)))
+                rotated_coords = R.dot(base_coords.T).T + int(N/2)
+                D = interpn((np.arange(N),) * 3, fM, rotated_coords)
+                np.maximum(D, 0.0, out=D)
+                
+                intensity = ctf_map.reshape((N, N)) * TtoF.dot(D).reshape((N, N))
+                np.maximum(1e-8, intensity, out=intensity)
+                intensity = np.float_( np.random.poisson(intensity) )
+                imgdata[i] = np.require(intensity, dtype=density.real_t)
+            self.imgdata = imgdata
+            print("  cost {} seconds.".format(time.time()-tic))
+
+            self.set_transform(interp_params)
+            # self.prep_processing()
+
         else:
+            euler_angles = []    
+            with open(self.dataset_params['gtpath']) as par:
+                par.readline()
+                # 'C                 PHI      THETA        PSI        SHX        SHY       FILM        DF1        DF2     ANGAST'
+                while True:
+                    try:
+                        line = par.readline().split()
+                        euler_angles.append([float(line[1]), float(line[2]), float(line[3])])
+                     except Exception:
+                        break
+            self.euler_angles = np.deg2rad(np.asarray(euler_angles))
+            imgdata = mrc.readMRC(self.dataset_params['inpath'])
+
+            self.imgdata = np.transpose(imgdata, axes=(2, 0, 1))
+
+            self.num_images = self.imgdata.shape[0]
+            self.num_pixels = self.imgdata.shape[1]
+            N = self.num_pixels
+
+            self.pixel_size = self.dataset_params['resolution']
+            self.is_sym = self.dataset_params.get('symmetry', None)
+
             self.use_ctf = False
             ctf_map = np.ones((N**2,), dtype=density.real_t)
-
-        kernel = 'lanczos'
-        ksize = 6
-        rad = 0.95
-        # premult = cryoops.compute_premultiplier(N, kernel, ksize)
-        TtoF = sincint.gentrunctofull(N=N, rad=rad)
-        base_coords = geometry.gencoords(N, 2, rad)
-        # premulter =   premult.reshape((1, 1, -1)) \
-        #             * premult.reshape((1, -1, 1)) \
-        #             * premult.reshape((-1, 1, 1))
-        # fM = density.real_to_fspace(premulter * model)
-        fM = model
-
-        # if load_cache:
-        #     try:
-        print("Generating Dataset ... :")
-        tic = time.time()
-        imgdata = np.empty((self.num_images, N, N), dtype=density.real_t)
-        for i, ea in enumerate(self.euler_angles):
-            R = geometry.rotmat3D_EA(*ea)[:, 0:2]
-            slop = cryoops.compute_projection_matrix(
-                [R], N, kernel, ksize, rad, 'rots')
-            # D = slop.dot(fM.reshape((-1,)))
-            rotated_coords = R.dot(base_coords.T).T + int(N/2)
-            D = interpn((np.arange(N),) * 3, fM, rotated_coords)
-            
-            intensity = ctf_map.reshape((N, N)) * TtoF.dot(D).reshape((N, N))
-            np.maximum(1e-6, intensity, out=intensity)
-            intensity = np.float_( np.random.poisson(intensity) )
-            imgdata[i] = np.require(intensity, dtype=density.real_t)
-        self.imgdata = imgdata
-        print("  cost {} seconds.".format(time.time()-tic))
-
-        self.set_transform(interp_params)
-        # self.prep_processing()
+            self.set_transform(interp_params)
 
     def __iter__(self):
         return self.imgdata.__iter__()

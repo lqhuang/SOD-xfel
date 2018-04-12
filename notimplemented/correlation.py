@@ -59,18 +59,19 @@ def pol2cart(*coords):
 # This is the same convention as used in SPIDER and XMIPP. Origin offsets reported 
 # for individual images translate the image to its center and are to be applied 
 # BEFORE rotations.
-def imgpolarcoord(img, rad=1.0):
+def imgpolarcoord(img, rad=1.0, beamstop_rad=None):
     """
     Convert a given image from cartesian coordinates to polar coordinates.
     """
     row, col = img.shape
     cx = int(col/2)
     cy = int(row/2)
+    beamstop_radius = float(min([row-cy, col-cx, cx, cy])) * beamstop_rad
     radius = int(min([row-cy, col-cx, cx, cy]) * rad)
     angle = 360.0
     # Interpolation: Nearest
-    pcimg = np.zeros((int(radius), int(angle)))
-    radius_range = np.arange(0, radius, 1)
+    pcimg = np.zeros((int(radius-beamstop_radius), int(angle)))
+    radius_range = np.arange(beamstop_radius, radius, 1.0)
     angle_range = np.arange(0, 2*np.pi, 2*np.pi/angle)
     i = 0
     for r in radius_range:
@@ -82,46 +83,52 @@ def imgpolarcoord(img, rad=1.0):
     return pcimg
 
 
-def imgpolarcoord3(img, rad=1.0):
+def imgpolarcoord3(img, rad=1.0, beamstop_rad=None):
     """
     converts a given image from cartesian coordinates to polar coordinates.
     """
     row, col = img.shape
     cx = int(col/2)
     cy = int(row/2)
-    radius = float(min([row-cy, col-cx, cx, cy])) * rad
+    # beamstop_radius = float(min([row-cy, col-cx, cx, cy])) * beamstop_rad
+    # radius = float(min([row-cy, col-cx, cx, cy])) * rad
+    beamstop_radius = cx * beamstop_rad
+    radius = cx * rad
     angle = 360.0
     # Interpolation: Linear
-    rho_range = np.arange(0, radius, 1)
+    rho_range = np.arange(beamstop_radius, radius, 1.0)
     theta_range = np.arange(0, 2*np.pi, 2*np.pi/angle)
     theta_grid, rho_grid = np.meshgrid(theta_range, rho_range)
     new_x_grid, new_y_grid = pol2cart(rho_grid, theta_grid)
 
-    pcimg = spinterp.map_coordinates(img, (new_x_grid + radius, new_y_grid + radius))
+    pcimg = spinterp.map_coordinates(img, (new_x_grid + int(cx), new_y_grid + int(cx)))
     return pcimg
 
 
-def get_corr_img(img, rad=1.0, pcimg_interpolation='nearest'):
+def get_corr_img(img, rad=1.0, beamstop_rad=None, pcimg_interpolation='linear'):
     """
     get a angular correlation image
     """
     if 'nearest' in pcimg_interpolation.lower():
-        pcimg = imgpolarcoord(img, rad=rad)
+        pcimg = imgpolarcoord(img, rad=rad, beamstop_rad=beamstop_rad)
     elif 'linear' in pcimg_interpolation.lower():
-        pcimg = imgpolarcoord3(img, rad=rad)
+        pcimg = imgpolarcoord3(img, rad=rad, beamstop_rad=beamstop_rad)
 
     pcimg_fourier = np.fft.fftshift(np.fft.fft(pcimg, axis=1))
     corr_img = np.fft.ifft(np.fft.ifftshift(pcimg_fourier*np.conjugate(pcimg_fourier)), axis=1)
-    return np.require(corr_img.real, dtype=density.real_t)
+    return np.require(corr_img.real, dtype=density.real_t).flatten()
 
 
-def get_corr_imgs(imgs, rad=1.0, pcimg_interpolation='nearest'):
+def get_corr_imgs(imgs, rad=1.0, beamstop_rad=None, pcimg_interpolation='linear'):
     num_imgs = imgs.shape[0]
     N = imgs.shape[1]
     assert N == imgs.shape[2]
-    corr_imgs = np.zeros((num_imgs, int(N/2.0), 360), dtype=density.real_t)
+    # corr_imgs = np.zeros((num_imgs, int(N/2.0), 360), dtype=density.real_t)
+    corr_imgs = np.zeros((num_imgs, int( (N/2.0) * (rad - beamstop_rad) + 1 ) * 360), dtype=density.real_t)
+    kwargs = {'rad': rad, 'beamstop_rad': beamstop_rad, 'pcimg_interpolation': pcimg_interpolation}
     for i, img in enumerate(imgs):
-        corr_imgs[i, :, :] = get_corr_img(img, rad=rad, pcimg_interpolation=pcimg_interpolation)
+        # corr_imgs[i, :, :] = get_corr_img(img, **kwargs)
+        corr_imgs[i, :] = get_corr_img(img, **kwargs)
 
     return corr_imgs
 
@@ -210,8 +217,10 @@ def calc_angular_correlation(trunc_slices, N, rad, beamstop_rad=None, pixel_size
     for i, count in enumerate(unique_counts):
         indices[axis] = slice(unique_idx[i], unique_idx[i] + count)
         # minimum points to do fft (2 or 4 times than Nyquist frequency)
-        minimum_sample_points = (4 / count) / resolution
-        if count <  minimum_sample_points:
+        # minimum_sample_points = (4 / count) / resolution
+        minimum_sample_points = 16
+        # print(count)
+        if count < minimum_sample_points:
             angular_correlation[indices]  = np.copy(sorted_slice[indices])
         else:
             # use view (slicing) or copy (fancy indexing, np.take(), np.put())?
@@ -240,22 +249,31 @@ def calc_angular_correlation(trunc_slices, N, rad, beamstop_rad=None, pixel_size
     if clip:
         factor = 3.0
         for i, count in enumerate(unique_counts):
-            minimum_sample_points = (4 / count) / resolution
+            # minimum_sample_points = (4 / count) / resolution
+            minimum_sample_points = 16
+            # print(count)
             if count <  minimum_sample_points:
                 pass
             else:
                 indices[axis] = slice(unique_idx[i], unique_idx[i] + count)
                 mean = np.tile(angular_correlation[indices].mean(axis), (count, 1)).T
                 std = np.tile(angular_correlation[indices].std(axis), (count, 1)).T
+                # print(mean)
+                # print(std)
 
-                if np.all(std < 1e-16):
-                    warnings.warn("Standard deviation all equal to zero")
-                    vmin = mean.mean(axis) - factor * std.mean(axis)
-                    vmax = mean.mean(axis) + factor * std.mean(axis)
-                else:
-                    angular_correlation[indices] = (angular_correlation[indices] - mean) / std
-                    vmin = -factor
-                    vmax = +factor
+                vmin = mean.mean(axis) - factor * std.mean(axis)
+                vmax = mean.mean(axis) + factor * std.mean(axis)
+
+                # if np.all(std < 1e-16):
+                #     # why ???
+                #     warnings.warn("Standard deviation all equal to zero")
+                #     vmin = mean.mean(axis) - factor * std.mean(axis)
+                #     vmax = mean.mean(axis) + factor * std.mean(axis)
+                # else:
+                #     # Normalize to N(0, 1)
+                #     angular_correlation[indices] = (angular_correlation[indices] - mean) / std
+                #     vmin = -factor
+                #     vmax = +factor
 
                 angular_correlation[indices] = np.clip(angular_correlation[indices].T, vmin, vmax).T  # set outlier to nearby boundary
                 # angular_correlation[indices] = threshold(angular_correlation[indices].T, vmin, vmax, 0).T  # set outlier to 0

@@ -20,6 +20,7 @@ from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 
 from cryoio import mrc
 from geometry import gen_dense_beamstop_mask
+from notimplemented import correlation
 
 
 def plot_projs(mrcs_files, log_scale=True, plot_randomly=True):
@@ -63,6 +64,9 @@ def plot_projs(mrcs_files, log_scale=True, plot_randomly=True):
 
 
 def plot_projs_with_slider(mrcs_files, log_scale=True):
+    N = 124
+    mask = gen_dense_beamstop_mask(N, 2, 0.005, psize=18.0)
+
     for mrcs in mrcs_files:
         image_stack = mrc.readMRCimgs(mrcs, 0)
         size = image_stack.shape
@@ -74,7 +78,9 @@ def plot_projs_with_slider(mrcs_files, log_scale=True):
         gs = GridSpec(2, 2, width_ratios=[1, 0.075], height_ratios=[1, 0.075], )
         # original
         ax = fig.add_subplot(gs[0, 0])
-        curr_img = image_stack[:, :, 0]
+        curr_img = image_stack[:, :, 0] * mask
+        curr_ac_img = correlation.calc_full_ac(curr_img, 0.95) * mask
+        curr_img = curr_ac_img
         if log_scale:
             curr_img = log(curr_img)
         im = ax.imshow(curr_img, origin='lower')
@@ -92,9 +98,11 @@ def plot_projs_with_slider(mrcs_files, log_scale=True):
 
         def update(val):
             idx = int(idx_slider.val)
-            curr_img = image_stack[:, :, idx]
+            curr_img = image_stack[:, :, idx] * mask
+            curr_ac_img = correlation.calc_full_ac(curr_img, 0.95) * mask
+            curr_img = curr_ac_img
             if log_scale:
-                curr_img = log(curr_img)
+                curr_img = log(curr_img) * mask
             im.set_data(curr_img)
             cbar.set_clim(vmin=curr_img.min(), vmax=curr_img.max())
             cbar.draw_all()

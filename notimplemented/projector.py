@@ -16,7 +16,7 @@ import pyximport; pyximport.install(
 import sincint
 
 
-def full_to_trunc(full_samples, rad):
+def full_to_trunc(full_samples, rad, beamstop_rad=None):
     """convert samples in full shape to samples in truncation"""
     dtype = full_samples.dtype
     if full_samples.ndim == 3:
@@ -27,7 +27,7 @@ def full_to_trunc(full_samples, rad):
         num_samples = 1
         full_samples = (full_samples,)
     
-    FtoT = sincint.genfulltotrunc(N=N, rad=rad)
+    FtoT = sincint.genfulltotrunc(N=N, rad=rad, beamstop_rad=None)
     N_T = FtoT.shape[0]
     
     trunc_samples = np.zeros((num_samples, N_T), dtype=dtype)
@@ -36,10 +36,10 @@ def full_to_trunc(full_samples, rad):
 
     return trunc_samples
 
-def trunc_to_full(trunc_samples, N, rad):
+def trunc_to_full(trunc_samples, N, rad, beamstop_rad=None):
     """convert truncated samples to samples in full shape"""
     num_samples = trunc_samples.shape[0]
-    TtoF = sincint.gentrunctofull(N=N, rad=rad)
+    TtoF = sincint.gentrunctofull(N=N, rad=rad, beamstop_rad=beamstop_rad)
     
     full_samples = np.zeros((num_samples, N, N), dtype=trunc_samples.dtype)
     for i, sample in enumerate(trunc_samples):

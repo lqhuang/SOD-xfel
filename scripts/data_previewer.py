@@ -22,19 +22,18 @@ def gen_slices(model_files, fspace=False, log_scale=True):
         N = M.shape[0]
         print('model size: {0}x{0}x{0}'.format(N))
 
+        oversampling_factor = 6
+        zeropad = oversampling_factor - 1  # oversampling factor = zeropad + 1
+        psize = 3.0 * oversampling_factor
+        beamstop_freq = 0.003
+        mask = geometry.gen_dense_beamstop_mask(N, 2, beamstop_freq, psize=psize)
+        # mask = None
+
         if fspace:
             fM = M
         else:
-            M_totalmass = 2000000
+            M_totalmass = 1500000
             M *= M_totalmass / M.sum()
-
-            oversampling_factor = 6
-            zeropad = oversampling_factor - 1  # oversampling factor = zeropad + 1
-
-            psize = 3.0 * oversampling_factor
-            beamstop_freq = 0.01
-            mask = geometry.gen_dense_beamstop_mask(N, 2, beamstop_freq, psize=psize)
-            # mask = None
 
             V = density.real_to_fspace_with_oversampling(M, oversampling_factor)
             fM = V.real ** 2 + V.imag ** 2
