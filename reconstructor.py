@@ -483,7 +483,7 @@ class CryoOptimizer(BackgroundWorker):
         # cryoem.align_density(M)
         # print("done in {0:.2f}s".format(time.time() - tic))
 
-        M_totalmass = 2000000
+        M_totalmass = 1500000
         M *= M_totalmass / M.sum()
         N = M.shape[0]
 
@@ -491,7 +491,7 @@ class CryoOptimizer(BackgroundWorker):
         oversampling_factor = self.params['oversampling_factor']
         V = density.real_to_fspace_with_oversampling(M, oversampling_factor)
         M = V.real ** 2 + V.imag ** 2
-        lowpass_filter = 1.0 - geometry.gen_dense_beamstop_mask(N, 3, 0.015, psize=self.cparams['pixel_size'])
+        lowpass_filter = 1.0 - geometry.gen_dense_beamstop_mask(N, 3, 0.006, psize=self.cparams['pixel_size'])
         M = lowpass_filter * M + 1.0 - lowpass_filter
 
         beamstop_freq = self.cparams.get('beamstop_freq', None)
