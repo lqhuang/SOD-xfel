@@ -491,8 +491,11 @@ class CryoOptimizer(BackgroundWorker):
         oversampling_factor = self.params['oversampling_factor']
         V = density.real_to_fspace_with_oversampling(M, oversampling_factor)
         M = V.real ** 2 + V.imag ** 2
-        lowpass_filter = 1.0 - geometry.gen_dense_beamstop_mask(N, 3, 0.006, psize=self.cparams['pixel_size'])
-        M = lowpass_filter * M + 1.0 - lowpass_filter
+        lowpass_freq = self.cparams.get('lowpass_freq', None)
+        if lowpass_freq is not None:
+            lowpass_filter = 1.0 - geometry.gen_dense_beamstop_mask(
+                N, 3, lowpass_freq, psize=self.cparams['pixel_size'])
+            M = lowpass_filter * M + 1.0 - lowpass_filter
 
         beamstop_freq = self.cparams.get('beamstop_freq', None)
         mask_3D = geometry.gen_dense_beamstop_mask(N, 3, beamstop_freq, psize=self.cparams['pixel_size'])

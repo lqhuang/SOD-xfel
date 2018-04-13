@@ -1,7 +1,8 @@
 {
 # 'init_model': "'exp/model-000100.mrc'",
 # 'init_model': "'particle/1AON.mrc'",
-'init_model': "'particle/EMD-6044-cropped.mrc'",
+# 'init_model': "'particle/EMD-6044-cropped.mrc'",
+'init_model': "'EMD-6044-cropped-non-negative-256.mrc'",
 
 'likelihood': "'UnknownRSLikelihood()'",
 'density_ub': None,
@@ -26,7 +27,7 @@
                                               2+floor(max(0,(iteration-2*max(150,50*ceil(num_batches/50.0)))/150.0))))',
 
 'beamstop_freq': 0.003,
-
+'lowpass_freq': 0.006,
 
 'quad_shiftsigma':      10,
 'quad_shiftextent':     60,

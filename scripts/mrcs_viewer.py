@@ -28,7 +28,7 @@ def plot_projs(mrcs_files, log_scale=True, plot_randomly=True):
         image_stack = mrc.readMRCimgs(mrcs, 0)
         size = image_stack.shape
         N = size[0]
-        mask = gen_dense_beamstop_mask(N, 2, 0.015, psize=2.8)
+        mask = gen_dense_beamstop_mask(N, 2, 0.003, psize=9)
         print('image size: {0}x{1}, number of images: {2}'.format(*size))
         print('Select indices randomly:', plot_randomly)
         fig, axes = plt.subplots(3, 3, figsize=(12.9, 9.6))
@@ -63,14 +63,12 @@ def plot_projs(mrcs_files, log_scale=True, plot_randomly=True):
     plt.show()
 
 
-def plot_projs_with_slider(mrcs_files, log_scale=True):
-    N = 124
-    mask = gen_dense_beamstop_mask(N, 2, 0.005, psize=18.0)
-
+def plot_projs_with_slider(mrcs_files, log_scale=True, show_ac_image=False):
     for mrcs in mrcs_files:
         image_stack = mrc.readMRCimgs(mrcs, 0)
         size = image_stack.shape
         N = size[0]
+        mask = gen_dense_beamstop_mask(N, 2, 0.003, psize=9)
         print('image size: {0}x{1}, number of images: {2}'.format(*size))
 
         # plot projections
@@ -79,8 +77,9 @@ def plot_projs_with_slider(mrcs_files, log_scale=True):
         # original
         ax = fig.add_subplot(gs[0, 0])
         curr_img = image_stack[:, :, 0] * mask
-        curr_ac_img = correlation.calc_full_ac(curr_img, 0.95) * mask
-        curr_img = curr_ac_img
+        if show_ac_image:
+            curr_ac_img = correlation.calc_full_ac(curr_img, 0.95) * mask
+            curr_img = curr_ac_img
         if log_scale:
             curr_img = log(curr_img)
         im = ax.imshow(curr_img, origin='lower')
@@ -99,10 +98,11 @@ def plot_projs_with_slider(mrcs_files, log_scale=True):
         def update(val):
             idx = int(idx_slider.val)
             curr_img = image_stack[:, :, idx] * mask
-            curr_ac_img = correlation.calc_full_ac(curr_img, 0.95) * mask
-            curr_img = curr_ac_img
+            if show_ac_image:
+                curr_ac_img = correlation.calc_full_ac(curr_img, 0.95) * mask
+                curr_img = curr_ac_img
             if log_scale:
-                curr_img = log(curr_img) * mask
+                curr_img = log(curr_img)
             im.set_data(curr_img)
             cbar.set_clim(vmin=curr_img.min(), vmax=curr_img.max())
             cbar.draw_all()
@@ -119,15 +119,20 @@ if __name__ == '__main__':
                         action="store_true")
     parser.add_argument("-r", "--plot_randomly", help="plot image with random index.",
                         action="store_true")
+    parser.add_argument("-a", "--show_ac_image", help="plot image with angular correlation.",
+                        action="store_true")
     args = parser.parse_args()
 
     log_scale = args.log_scale
     mrcs_files = args.mrcs_files
     plot_randomly = args.plot_randomly
+    show_ac_image = args.show_ac_image
     print('mrcs_files:', mrcs_files)
     print('log_scale:', log_scale)
     print('plot_randomly:', plot_randomly)
+    print('show_ac_image', show_ac_image)
     if plot_randomly:
         plot_projs(mrcs_files, log_scale=log_scale)
     else:
-        plot_projs_with_slider(mrcs_files, log_scale=log_scale)
+        plot_projs_with_slider(
+            mrcs_files, log_scale=log_scale, show_ac_image=show_ac_image)

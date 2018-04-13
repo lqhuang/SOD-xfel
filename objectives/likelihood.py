@@ -594,11 +594,12 @@ class UnknownRSKernel:
         max_freq = cparams['max_frequency']
         psize = cparams['pixel_size']
         rad_cutoff = cparams.get('rad_cutoff', 1.0)
-        rad = min(rad_cutoff,max_freq*2.0*psize)
+        rad = min(rad_cutoff, max_freq * 2.0 * psize)
         beamstop_freq = cparams.get('beamstop_freq', None)
         beamstop_rad = beamstop_freq * 2.0 * psize
 
         if beamstop_freq is None:
+            print('Beamstop freq is unset.')
             self.xy, self.trunc_xy, self.truncmask = gencoords(self.N, 2, rad, True)
         else:
             self.xy, self.trunc_xy, self.truncmask = gencoords_centermask(self.N, 2, rad, beamstop_rad, True)

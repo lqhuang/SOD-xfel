@@ -37,8 +37,8 @@ def genphantomdata(N_D, phantompath):
 
     N = M.shape[0]
     rad = 0.95
-    # M_totalmass = 1000000
-    M_totalmass = 1500000
+    M_totalmass = 1000000
+    # M_totalmass = 1500000
     kernel = 'lanczos'
     ksize = 6
 
@@ -66,12 +66,12 @@ def genphantomdata(N_D, phantompath):
         M *= M_totalmass / M.sum()
 
     # oversampling
-    oversampling_factor = 6
+    oversampling_factor = 3
     psize = psize * oversampling_factor
     V = density.real_to_fspace_with_oversampling(M, oversampling_factor)
     fM = V.real ** 2 + V.imag ** 2
 
-    mrc.writeMRC('particle/EMD6044_fM_totalmass_{}_oversampling_{}.mrc'.format(str(int(M_totalmass)).zfill(5), oversampling_factor), fM, psz=psize)
+    # mrc.writeMRC('particle/EMD6044_fM_totalmass_{}_oversampling_{}.mrc'.format(str(int(M_totalmass)).zfill(5), oversampling_factor), fM, psz=psize)
 
     print("Generating data...")
     sys.stdout.flush()
