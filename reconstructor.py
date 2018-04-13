@@ -483,8 +483,9 @@ class CryoOptimizer(BackgroundWorker):
         # cryoem.align_density(M)
         # print("done in {0:.2f}s".format(time.time() - tic))
 
-        M_totalmass = 1500000
-        M *= M_totalmass / M.sum()
+        M_totalmass = self.params.get('M_totalmass', None)
+        if M_totalmass is not None:
+            M *= M_totalmass / M.sum()
         N = M.shape[0]
 
         # oversampling

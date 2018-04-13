@@ -3,6 +3,7 @@
 # 'init_model': "'particle/1AON.mrc'",
 # 'init_model': "'particle/EMD-6044-cropped.mrc'",
 'init_model': "'EMD-6044-cropped-non-negative-256.mrc'",
+'M_totalmass' : 1000000,
 
 'likelihood': "'UnknownRSLikelihood()'",
 'density_ub': None,
@@ -57,5 +58,5 @@
 'evaluate_test_set':    'max_frequency_changed or iteration % 10 == 0',
 'save_iteration':       'iteration % 10 == 0',
 'save_time':            30,
-'checkpoint_frequency': 100,
+'checkpoint_frequency': 50,
 }

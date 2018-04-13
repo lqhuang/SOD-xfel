@@ -1,6 +1,8 @@
 {
 # 'init_model': "'exp/model-000100.mrc'",
 # 'init_model': "'particle/1AON.mrc'",
+'init_model': "'particle/1AON_256.mrc'",
+'M_totalmass' : 1000000,
 
 'likelihood': "'UnknownRSLikelihood()'",
 'density_ub': None,
@@ -20,7 +22,7 @@
 'test_imgs':	100,
 
 'max_frequency':        'min(0.15, \
-                             0.02 + 0.005 * (0 if iteration < max(150,50*ceil(num_batches/50.0)) else \
+                             0.005 + 0.005 * (0 if iteration < max(150,50*ceil(num_batches/50.0)) else \
                                               1 if iteration < 2*max(150,50*ceil(num_batches/50.0)) else \
                                               2+floor(max(0,(iteration-2*max(150,50*ceil(num_batches/50.0)))/150.0))))',
 

@@ -1,6 +1,12 @@
 # temp data
 /data
-
+*/*.png
+*/*.pkl
+*.png
+*.log
+*.npy
+*/*.npy
+particle/
 # DS file for macOS
 .*DS_Store
 
