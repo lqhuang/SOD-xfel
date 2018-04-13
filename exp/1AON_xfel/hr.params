@@ -21,6 +21,9 @@
 'minisize':		100,
 'test_imgs':	100,
 
+'beamstop_freq': 0.003,
+'lowpass_freq': 0.006,
+
 'max_frequency':        'min(0.15, \
                              0.005 + 0.005 * (0 if iteration < max(150,50*ceil(num_batches/50.0)) else \
                                               1 if iteration < 2*max(150,50*ceil(num_batches/50.0)) else \
