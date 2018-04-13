@@ -8,7 +8,6 @@ import warnings
 import numpy as np
 from scipy import interpolate
 from scipy.ndimage import interpolation as spinterp
-from scipy.stats import threshold
 
 import geometry
 import density
@@ -276,7 +275,6 @@ def calc_angular_correlation(trunc_slices, N, rad, beamstop_rad=None, pixel_size
                 #     vmax = +factor
 
                 angular_correlation[indices] = np.clip(angular_correlation[indices].T, vmin, vmax).T  # set outlier to nearby boundary
-                # angular_correlation[indices] = threshold(angular_correlation[indices].T, vmin, vmax, 0).T  # set outlier to 0
 
 
     # 5.
