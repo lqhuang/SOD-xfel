@@ -1,8 +1,8 @@
 # Common parameters for EMD-6044 optimization experiments
 {
 'dataset_name': "'EMD-6044'",
-'inpath': 'data/EMD6044_256_xfel_10000_totalmass_1000000_oversampling_6/imgdata.mrc',
-'ctfpath': 'data/EMD6044_256_xfel_10000_totalmass_1000000_oversampling_6/defocus.txt',
+'inpath': 'data/EMD6044_256_xfel_10000_totalmass_1000000_oversampling_3/imgdata.mrc',
+'ctfpath': 'data/EMD6044_256_xfel_10000_totalmass_1000000_oversampling_3/defocus.txt',
 'microscope_params': {'akv':200,'wgh':0.07,'cs':2.0},
 'resolution': 9,
 'oversampling_factor': 3,
