@@ -244,7 +244,7 @@ class UnknownRSKernel:
         # FIXME: Eventually do this adaptively based on the amount of memory and
         # effectiveness of IS because, once IS kicks in, OTF slicing may be faster.
         self.otf_thresh_RI = params.get('otf_thresh_RI',60000)
-        self.otf_thresh_R = params.get('otf_thresh_R',5000)
+        self.otf_thresh_R = params.get('otf_thresh_R',15000)
         self.otf_thresh_I = params.get('otf_thresh_I',500)
         self.fspace_premult_stack_caching = params.get('interp_cache_fspace', True)
         self.ostream = ostream
@@ -856,15 +856,20 @@ class UnknownRSKernel:
         # print("number of slices_sampled < 1.0:", (slices_sampled<1.0).sum(axis=1).mean())
         # print("min of slices_sampled:", slices_sampled.min())
         # print("slices_sampled", rotc_sampled[0] * slices_sampled[0])
-        np.maximum(1e-6, slices_sampled, out=slices_sampled)
+        # np.maximum(1e-6, slices_sampled, out=slices_sampled)
+        if np.any(slices_sampled - 1.0 < 0.0):
+            to_one = np.min(slices_sampled - 1.0)
+            slices_sampled -= to_one
 
         # invalid_rotd_sampled = rotd_sampled < 1.0
         # print("number of invalid rotd_sampled", invalid_rotd_sampled.sum(axis=1).mean())
         # rotd_sampled = rotc_sampled * rotd_sampled + 1.0 - rotc_sampled
         # print("number of rotd_sampled < 1.0", rotd_sampled.min())
         # print("rotd_sampled", rotc_sampled[0] * rotd_sampled[0])
-        np.maximum(1e-6, rotd_sampled, out=rotd_sampled)
-        # rotd_sampled += 1.0
+        # np.maximum(1e-6, rotd_sampled, out=rotd_sampled)
+        if np.any(rotd_sampled - 1.0 < 0.0):
+            to_one = np.min(rotd_sample - 1.0)
+            rotd_sample -= to_one
 
         return slice_ops, envelope, \
             W_R_sampled, sampleinfo_R, slices_sampled, samples_R, \

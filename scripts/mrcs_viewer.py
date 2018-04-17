@@ -47,13 +47,13 @@ def plot_projs(mrcs_files, log_scale=True, plot_randomly=True):
 
             ticks = [0, int(N/4.0), int(N/2.0), int(N*3.0/4.0), int(N-1)]
             if row == 2:
-                ax.set_xticks()
+                ax.set_xticks([])
             else:
-                ax.set_xticks([ticks])
+                ax.set_xticks(ticks)
             if col == 0:
-                ax.set_yticks()
+                ax.set_yticks([])
             else:
-                ax.set_yticks([ticks])
+                ax.set_yticks(ticks)
 
         fig.subplots_adjust(right=0.8)
         cbarar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
