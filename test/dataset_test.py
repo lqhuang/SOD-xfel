@@ -125,10 +125,11 @@ class SimpleDataset():
                     try:
                         line = par.readline().split()
                         euler_angles.append([float(line[1]), float(line[2]), float(line[3])])
-                     except Exception:
+                    except Exception:
                         break
             self.euler_angles = np.deg2rad(np.asarray(euler_angles))
-            imgdata = mrc.readMRC(self.dataset_params['inpath'])
+            num_images = self.dataset_params.get('num_images', 200)
+            imgdata = mrc.readMRCimgs(self.dataset_params['inpath'], 0, num_images)
 
             self.imgdata = np.transpose(imgdata, axes=(2, 0, 1))
 

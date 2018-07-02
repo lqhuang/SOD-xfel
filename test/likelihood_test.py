@@ -18,7 +18,8 @@ try:
 except ImportError:
     from multiprocessing import cpu_count
     NUM_CORES = cpu_count()
-
+if NUM_CORES > 20:
+    NUM_CORES = 20
 
 from cryoio import mrc
 from cryoio import ctf
@@ -78,9 +79,13 @@ def plotwinkeltriple(dirs, values, spot=None, others=None, vmin=None, vmax=None,
         ax = axes
     else:
         ax = plt.subplot(111)
-    tripim = ax.tripcolor(x, y, 1e-10 + values, shading='gouraud',vmin=vmin+1e-10,vmax=vmax+1e-10,norm=norm)
-    plt.colorbar(tripim)
+    tripim = ax.tripcolor(x, y, 1e-10 + values, shading='gouraud',vmin=vmin+1e-10,vmax=vmax+1e-10,norm=norm, cmap='jet')
+
+    ax_divider = make_axes_locatable(ax)
+    cax = ax_divider.append_axes("right", size="7%", pad="1%")
+    ax.get_figure().colorbar(tripim, cax=cax, ax=ax)
     ax.plot(x_border,y_border,'-k')
+    ax.axis('off')
 
     if spot is not None:
         phi_s = np.arctan2(spot[:,2],np.linalg.norm(spot[:,0:2],axis=1)).reshape((-1,))
@@ -98,6 +103,8 @@ def plotwinkeltriple(dirs, values, spot=None, others=None, vmin=None, vmax=None,
 
     if axes is None:
         plt.show()
+
+    return ax
 # ------------------------------------------------------------------- #
 
 
@@ -331,8 +338,8 @@ class SimpleKernel():
         max_freq = cparams['max_frequency']
         rad_cutoff = cparams.get('rad_cutoff', 1.0)
         fake_oversampling_factor = 1.0
-        rad = min(rad_cutoff, max_freq * fake_oversampling_factor * self.psize)
-        self.beamstop_rad = cparams.get('beamstop_freq', 0.05) * fake_oversampling_factor * self.psize
+        rad = min(rad_cutoff, max_freq * 2 * self.psize)
+        self.beamstop_rad = cparams.get('beamstop_freq', 0.003) * 2 * self.psize
 
         self.xy, self.trunc_xy, self.truncmask = geometry.gencoords_centermask(self.N, 2, rad, self.beamstop_rad, True)
         self.trunc_freq = np.require(self.trunc_xy / (self.N * self.psize), dtype=np.float32) 
@@ -379,8 +386,8 @@ class SimpleKernel():
             # set slicing quadrature
             usFactor_R = 1.0
             quad_R = quadrature.quad_schemes[('dir', self.slice_params['quad_type'])]
-            const_rad = 0.6
-            degree_R, resolution_R = quad_R.compute_degree(self.N, const_rad, usFactor_R)
+            const_quad_rad = 0.45 # adjust quadrature
+            degree_R, resolution_R = quad_R.compute_degree(self.N, const_quad_rad, usFactor_R)
             # print(np.rad2deg(resolution_R))
             slice_quad = {}
             slice_quad['resolution'] = max(0.5*quadrature.compute_max_angle(self.N, rad), resolution_R)
@@ -399,7 +406,7 @@ class SimpleKernel():
             self.inplane_interp = {'N': self.N, 'kern': 'lanczos', 'kernsize': 6, 'rad': rad, 'zeropad': 0, 'dopremult': True} #, 'onlyRs': True}
             # set inplane quadrature
             usFactor_I = 1.0
-            maxAngle = quadrature.compute_max_angle(self.N, const_rad, usFactor_I)
+            maxAngle = quadrature.compute_max_angle(self.N, const_quad_rad, usFactor_I)
             degree_I = np.uint32(np.ceil(2.0 * np.pi / maxAngle))
             resolution_I = max(0.5*quadrature.compute_max_angle(self.N, rad), 2.0*np.pi / degree_I)
             inplane_quad = {}
@@ -693,7 +700,7 @@ def likelihood_estimate(model, refined_model, use_angular_correlation=False, add
     #     model *= density_totalmass / model.sum()
 
     euler_angles = []
-    data_dir = 'data/1AON_xfel_5000_totalmass_10000_oversampling_3'
+    data_dir = '../data/EMD6044_256_xfel_10000_totalmass_1000000_oversampling_3'
     with open(os.path.join(data_dir, 'ctf_gt.par')) as par:
         par.readline()
         # 'C                 PHI      THETA        PSI        SHX        SHY       FILM        DF1        DF2     ANGAST'

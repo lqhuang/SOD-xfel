@@ -18,25 +18,26 @@ import sincint
 
 
 if __name__ == '__main__':
-    psize = 2.8 * 6
-    freq = 0.05
-    rad = 0.5 * 2.0 * psize
-    beamstop_freq = 0.01
+    psize = 3.0 * 3
+    freq = 0.005
+    rad = freq * 2.0 * psize
+    beamstop_freq = 0.003
     beamstop_rad = beamstop_freq * 2.0 * psize
 
-    fM = mrc.readMRC('particle/1AON_fourier.mrc')
+    fM = mrc.readMRC('../particle/EMD-6044-cropped-non-negative-256.mrc')
     N = fM.shape[0]
 
     TtoF = sincint.gentrunctofull(N=N, rad=rad, beamstop_rad=beamstop_rad)
 
     theta = np.arange(0, 2*np.pi, 2*np.pi/12)
-    degree_R, resolution_R = SK97Quadrature.compute_degree(N, 0.3, 1.0)
+    degree_R, resolution_R = SK97Quadrature.compute_degree(N, rad, 1.0)
     dirs, weights = SK97Quadrature.get_quad_points(degree_R, None)
     Rs = np.vstack([geometry.rotmat3D_dir(vec)[:, 0:2].reshape((1, 3, 2)) for vec in dirs])
 
     N_R = dirs.shape[0]
     N_I = theta.shape[0]
     N_T = TtoF.shape[1]
+    print(N_R, N_I, N_T)
 
     # generate slicing operators
     dir_slice_interp = {'projdirs': dirs, 'N': N, 'kern': 'lanczos', 'kernsize': 6, 
